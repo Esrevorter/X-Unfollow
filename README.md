@@ -2,6 +2,7 @@
 
 A sophisticated Tampermonkey userscript for safely and efficiently unfollowing accounts on X.com (formerly Twitter). This script prioritizes human-like behavior patterns to minimize detection risk while providing full configurability and real-time progress tracking.
 
+
 ---
 
 ## 📋 Table of Contents
@@ -511,5 +512,7 @@ This script is provided as-is without warranty. You are free to modify and distr
 
 Original author: Community contributor  
 Maintained by: Open source community  
+Original author: Esrevorter  
+Maintained by: Esrevorter 
 
 For questions, issues, or contributions, please refer to your userscript manager's community forums.
