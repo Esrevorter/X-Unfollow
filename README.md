@@ -474,6 +474,34 @@ The UI uses the following CSS variables (defined in `#xuf` scope):
 
 ---
 
+## 💖 Support the Project
+
+If you find this script useful and would like to support its continued development, consider buying me a coffee or making a donation!
+
+### ☕ Buy Me a Coffee
+Your support helps keep this project alive and updated:
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/esrevorter)
+
+👉 **[buymeacoffee.com/esrevorter](https://buymeacoffee.com/esrevorter)**
+
+### ₿ Bitcoin Donations
+Prefer cryptocurrency? You can donate via Bitcoin:
+
+```
+bc1qwd330n3m9exjfhmzs6r0fh4e73v0plmjv7pawppgv7k79j5ce4gqc6c7u2
+```
+
+[![Bitcoin](https://img.shields.io/badge/Bitcoin-F7931A?style=for-the-badge&logo=bitcoin&logoColor=white)](https://blockstream.info/address/bc1qwd330n3m9exjfhmzs6r0fh4e73v0plmjv7pawppgv7k79j5ce4gqc6c7u2)
+
+> 💡 **Tip**: Click the badge above to view the address on a block explorer for easy verification.
+
+---
+
+Every contribution, no matter how small, is greatly appreciated and helps fund ongoing maintenance, feature improvements, and community support! 🙏
+
+---
+
 ## License
 
 This script is provided as-is without warranty. You are free to modify and distribute it under the terms of your userscript manager's license agreement.
@@ -482,6 +510,8 @@ This script is provided as-is without warranty. You are free to modify and distr
 
 ## Author
 
+Original author: Community contributor  
+Maintained by: Open source community  
 Original author: Esrevorter  
 Maintained by: Esrevorter 
 
