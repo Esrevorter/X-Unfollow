@@ -510,8 +510,7 @@ This script is provided as-is without warranty. You are free to modify and distr
 
 ## Author
 
-Original author: Community contributor  
-Maintained by: Open source community  
+
 Original author: Esrevorter  
 Maintained by: Esrevorter 
 
