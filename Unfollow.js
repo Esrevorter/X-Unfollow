@@ -7,7 +7,48 @@
 // @match        https://x.com/*/following
 // @match        https://twitter.com/*/following
 // @grant        GM_addStyle
+// 
+// @downloadURL  https://example.com/script.user.js
+// @updateURL    https://example.com/script.meta.js
+// 
 // ==/UserScript==
+
+/**
+ * X.com Safe Unfollow Script v7.3
+ * 
+ * A sophisticated Tampermonkey userscript for safely and efficiently unfollowing 
+ * accounts on X.com (formerly Twitter). This script prioritizes human-like behavior 
+ * patterns to minimize detection risk while providing full configurability and 
+ * real-time progress tracking.
+ * 
+ * @module XUnfollow
+ * @version 7.3
+ * @author Community Contributor
+ * 
+ * @features
+ *   - Bidirectional sorting (oldest/newest first)
+ *   - Configurable unfollow limits and delays
+ *   - Humanized click simulation with mouse events
+ *   - Robust modal detection and handling
+ *   - Progress tracking with ETA estimation
+ *   - Detailed color-coded logging
+ *   - Draggable, collapsible UI panel
+ *   - Settings persistence via localStorage
+ *   - Empty page tolerance for smart stopping
+ *   - Anti-detection measures (randomized timing, varied scrolls)
+ * 
+ * @safety
+ *   - Skips users who follow you back
+ *   - Validates username in confirmation modal
+ *   - Prevents duplicate processing
+ *   - Automatic retry on failures (max 3 attempts)
+ *   - Progressive backoff for stuck states
+ * 
+ * @see {@link https://www.tampermonkey.net/} for installation instructions
+ * @see README.md for complete documentation
+ * 
+ * @warning Use at your own risk. May violate X.com Terms of Service.
+ */
 
 (function() {
     'use strict';
@@ -66,6 +107,19 @@
         #xuf .grid-full{grid-column:1/-1}
     `);
 
+    // ========================================
+    // CONFIGURATION & STATE MANAGEMENT
+    // ========================================
+    
+    /**
+     * Default configuration values
+     * @type {Object}
+     * @property {number} limit - Maximum unfollows per session (1-1000)
+     * @property {number} minDelay - Minimum delay between actions in seconds (3-60)
+     * @property {number} maxDelay - Maximum delay between actions in seconds (5-120)
+     * @property {boolean} oldestFirst - Sort order: true=oldest, false=newest
+     * @property {number} emptyTolerance - Pages with no targets before stopping (1-999)
+     */
     const DEFAULTS = { 
         limit: 50, 
         minDelay: 8, 
@@ -73,26 +127,79 @@
         oldestFirst: true,
         emptyTolerance: 50 
     };
-    const LS_POS = 'xuf_pos_v73', LS_COL = 'xuf_col_v73', LS_CFG = 'xuf_cfg_v73';
-    let unfollowCount = 0, currentLimit = DEFAULTS.limit, isRunning = false, shouldStop = false;
-    let processed = new Set(), scannedCount = 0, startTime = 0;
-    let scrollDirection = 'down';
-    let consecutiveEmptyPages = 0;
-    let totalScrolledPages = 0;
-    let emptyTolerance = DEFAULTS.emptyTolerance;
-    const MAX_RETRIES = 3;
-    const SCROLL_FRACTIONS = [0.4, 0.5, 0.6, 0.7, 0.8];
     
-    // Cache for DOM queries to reduce reflows
+    /**
+     * LocalStorage keys for persistence
+     * @constant {string}
+     */
+    const LS_POS = 'xuf_pos_v73', LS_COL = 'xuf_col_v73', LS_CFG = 'xuf_cfg_v73';
+    
+    // ========================================
+    // RUNTIME STATE VARIABLES
+    // ========================================
+    
+    let unfollowCount = 0,           // Successful unfollows in current session
+        currentLimit = DEFAULTS.limit, // Active session limit
+        isRunning = false,            // Script execution state
+        shouldStop = false;           // Stop request flag
+    
+    let processed = new Set(),        // Usernames already handled (prevents duplicates)
+        scannedCount = 0,             // Total cells examined
+        startTime = 0;                // Session start timestamp
+    
+    let scrollDirection = 'down';     // Current scroll direction
+    let consecutiveEmptyPages = 0;    // Counter for empty scroll results
+    let totalScrolledPages = 0;       // Total pages scrolled in session
+    let emptyTolerance = DEFAULTS.emptyTolerance; // Tolerance threshold
+    
+    const MAX_RETRIES = 3;            // Maximum click retry attempts
+    const SCROLL_FRACTIONS = [0.4, 0.5, 0.6, 0.7, 0.8]; // Varied scroll distances
+    
+    /**
+     * WeakMap cache for DOM queries to reduce reflows
+     * Stores username and button references per user cell
+     * @type {WeakMap<Element, {username?: string, button?: Element}>}
+     */
     const domCache = new WeakMap();
     
+    // ========================================
+    // UTILITY FUNCTIONS
+    // ========================================
+    
+    /**
+     * Safely retrieves a value from localStorage
+     * @param {string} k - Storage key
+     * @returns {string|null} Stored value or null if error/not found
+     */
     const lsGet = k => { try { return localStorage.getItem(k); } catch(e){ return null; } };
+    
+    /**
+     * Safely stores a value in localStorage
+     * @param {string} k - Storage key
+     * @param {string} v - Value to store
+     */
     const lsSet = (k,v) => { try { localStorage.setItem(k,v); } catch(e){} };
+    
+    // Load saved configuration from localStorage
     let savedCfg = null; try { savedCfg = JSON.parse(lsGet(LS_CFG)); } catch(e){}
     const cfg = Object.assign({}, DEFAULTS, savedCfg||{});
     emptyTolerance = cfg.emptyTolerance || DEFAULTS.emptyTolerance;
+    
+    /**
+     * Escapes HTML special characters to prevent XSS
+     * @param {*} s - Value to escape
+     * @returns {string} Escaped string
+     */
     const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 
+    // ========================================
+    // UI PANEL CREATION
+    // ========================================
+    
+    /**
+     * Main UI panel container
+     * @type {HTMLDivElement}
+     */
     const w = document.createElement('div');
     w.id = 'xuf';
     w.style.cssText = 'position:fixed;right:20px;bottom:20px;width:304px;background:var(--panel);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);color:var(--ink);border:1px solid rgba(255,255,255,.1);border-radius:16px;z-index:99999;box-shadow:0 12px 40px rgba(0,0,0,.55);overflow:hidden';
@@ -127,11 +234,42 @@
     try { const p = JSON.parse(lsGet(LS_POS)); if (p && typeof p.left==='number') { w.style.left=p.left+'px'; w.style.top=p.top+'px'; w.style.right='auto'; w.style.bottom='auto'; } } catch(e){}
     if (lsGet(LS_COL)==='1') w.classList.add('collapsed');
 
+    // ========================================
+    // DOM HELPERS & CONSTANTS
+    // ========================================
+    
+    /**
+     * Shorthand for getElementById
+     * @param {string} id - Element ID
+     * @returns {HTMLElement|null}
+     */
     const $ = id => document.getElementById(id);
+    
     const logEl = $('xuf-log');
+    
+    /**
+     * Log message color mappings by type
+     * @type {Object.<string, string>}
+     */
     const COL = { success:'var(--ok)', error:'var(--err)', warn:'var(--warn)', system:'var(--b)', info:'var(--ink)', debug:'var(--mut)' };
+    
+    /**
+     * Log message icon mappings by type
+     * @type {Object.<string, string>}
+     */
     const ICO = { success:'✅', error:'❌', warn:'⚠️', system:'🔄', info:'ℹ️', debug:'🔍' };
     
+    // ========================================
+    // LOGGING FUNCTION
+    // ========================================
+    
+    /**
+     * Adds a formatted entry to the visual log and console
+     * Automatically removes oldest entries when exceeding 240 items
+     * 
+     * @param {string} msg - Message to log
+     * @param {'success'|'error'|'warn'|'system'|'info'|'debug'} [type='info'] - Log entry type
+     */
     function log(msg, type='info') {
         const e = document.createElement('div');
         e.className = 'le'; e.style.color = COL[type] || 'var(--ink)';
@@ -141,9 +279,27 @@
         console.log(`[XUnfollow][${type}] ${msg}`);
     }
     
+    // ========================================
+    // DELAY/SLEEP UTILITY
+    // ========================================
+    
+    /**
+     * Promise-based delay with optional randomization
+     * @param {number} a - If both params provided: min delay in ms. Single param: fixed delay
+     * @param {number} [b] - Max delay in ms (for randomization)
+     * @returns {Promise<void>}
+     */
     const sleep = (a,b) => new Promise(r => setTimeout(r, typeof a === 'number' && typeof b === 'number' ? 
         Math.floor(Math.random()*(b-a+1))+a : a));
     
+    // ========================================
+    // STATUS & PROGRESS FUNCTIONS
+    // ========================================
+    
+    /**
+     * Updates the status display text and running indicator
+     * @param {string} t - Status message to display
+     */
     const setStatus = t => { 
         $('xuf-st').textContent = t; 
         const indicator = $('xuf-status-indicator');
@@ -156,6 +312,10 @@
         }
     };
     
+    /**
+     * Updates progress bar and counter with current statistics
+     * Includes ETA estimation and empty page count
+     */
     const setProgress = () => { 
         const elapsed = startTime ? Math.floor((Date.now() - startTime) / 1000) : 0;
         const remaining = unfollowCount > 0 ? Math.round((currentLimit - unfollowCount) / unfollowCount * elapsed) : 0;
@@ -165,6 +325,11 @@
         $('xuf-fill').style.width = Math.min(unfollowCount/currentLimit*100,100)+'%'; 
     };
     
+    /**
+     * Normalizes username by removing @ prefix and lowercasing
+     * @param {string} s - Username to normalize
+     * @returns {string} Normalized username
+     */
     const norm = s => (s||'').replace(/^@/,'').toLowerCase();
 
     $('xuf-col').addEventListener('click', e => { 
@@ -186,8 +351,28 @@
         hdr.addEventListener('pointerup', () => { if(dragging){ dragging=false; lsSet(LS_POS, JSON.stringify({left:parseFloat(w.style.left),top:parseFloat(w.style.top)})); } });
     })();
 
-    function isVisible(el){ if(!el) return false; const r=el.getBoundingClientRect(); if(r.width<10||r.height<10) return false; const cs=getComputedStyle(el); return cs.visibility!=='hidden'&&cs.display!=='none'&&parseFloat(cs.opacity||'1')>0.1; }
+    // ========================================
+    // MODAL DETECTION & HANDLING
+    // ========================================
     
+    /**
+     * Checks if an element is visible on the page
+     * @param {Element} el - Element to check
+     * @returns {boolean} True if element is visible and interactive
+     */
+    function isVisible(el){ 
+        if(!el) return false; 
+        const r=el.getBoundingClientRect(); 
+        if(r.width<10||r.height<10) return false; 
+        const cs=getComputedStyle(el); 
+        return cs.visibility!=='hidden'&&cs.display!=='none'&&parseFloat(cs.opacity||'1')>0.1; 
+    }
+    
+    /**
+     * Finds a visible confirmation dialog/modal on the page
+     * Uses multiple selectors to handle X.com UI variations
+     * @returns {Element|null} Dialog element or null if none found
+     */
     function getVisibleDialog(){
         const sels=['[role="dialog"]','[data-testid="sheetDialog"]','[data-testid="DialogContainer"]','[data-testid="confirmationSheetDialog"]','[data-testid="Dialog"]','[aria-modal="true"]'];
         const seen=new Set();
@@ -204,6 +389,11 @@
         return null;
     }
     
+    /**
+     * Polls for a modal dialog to appear within a time window
+     * @param {number} ms - Maximum time to wait in milliseconds
+     * @returns {Promise<Element|null>} Dialog element or null if timeout
+     */
     async function pollModal(ms){ 
         const t0=Date.now(); 
         while(Date.now()-t0<ms){ 
@@ -214,6 +404,10 @@
         return null; 
     }
     
+    /**
+     * Closes a modal dialog by finding cancel button or sending Escape key
+     * @param {Element} m - Modal element to close
+     */
     function closeModal(m){ 
         if(m){ 
             const c=[...m.querySelectorAll('button')].find(b=>/cancel|close/i.test(b.textContent.trim())); 
@@ -222,6 +416,16 @@
         document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',keyCode:27,which:27,bubbles:true})); 
     }
 
+    // ========================================
+    // EVENT SIMULATION
+    // ========================================
+    
+    /**
+     * Dispatches a mouse or pointer event on an element
+     * @param {Element} el - Target element
+     * @param {string} type - Event type (e.g., 'click', 'pointerdown')
+     * @param {Object} init - Event initialization object
+     */
     function fire(el, type, init){ 
         try{ 
             const event = type.indexOf('pointer') === 0 ? 
@@ -231,6 +435,19 @@
         } catch(e){} 
     }
 
+    // ========================================
+    // HUMANIZED CLICK SIMULATION
+    // ========================================
+    
+    /**
+     * Simulates a human-like click on a button element
+     * Includes hover, press, hold, and release phases with natural timing
+     * 
+     * @async
+     * @param {Element} buttonElement - Button to click
+     * @returns {Promise<{targetTag: string}>} Object containing clicked element's tag name
+     * @property {string} targetTag - 'invalid', 'hidden', or actual tag name
+     */
     async function realClickOnButton(buttonElement){
         if (!buttonElement || !buttonElement.getBoundingClientRect) {
             return { targetTag: 'invalid' };
@@ -241,6 +458,7 @@
             return { targetTag: 'hidden' };
         }
         
+        // Calculate safe click coordinates (avoiding edges)
         const padding = 6;
         const safeWidth = Math.max(0, r.width - padding * 2);
         const safeHeight = Math.max(0, r.height - padding * 2);
@@ -250,32 +468,43 @@
         const base = {bubbles:true,cancelable:true,view:window,clientX:cx,clientY:cy,screenX:cx,screenY:cy,button:0,buttons:1,pointerId:1,pointerType:'mouse',isPrimary:true};
         const targetElement = document.elementFromPoint(cx, cy) || buttonElement;
 
-        // Hover
+        // Hover phase
         fire(targetElement, 'pointerover', base);
         fire(targetElement, 'mouseover', base);
 
-        // Human reaction time
+        // Human reaction time delay
         await sleep(150, 400);
 
-        // Press down
+        // Press down phase
         fire(targetElement, 'pointerdown', base);
         fire(targetElement, 'mousedown', base);
         try { targetElement.focus(); } catch(e){}
 
-        // Hold
+        // Hold phase (button press duration)
         await sleep(50, 150);
 
-        // Release
+        // Release phase
         fire(targetElement, 'pointerup', {...base, buttons:0});
         fire(targetElement, 'mouseup', {...base, buttons:0});
         fire(targetElement, 'click', {...base, buttons:0});
 
-        // Fallback
+        // Fallback native click
         try { buttonElement.click(); } catch(e){}
 
         return { targetTag: targetElement.tagName.toLowerCase() };
     }
 
+    // ========================================
+    // DOM QUERY FUNCTIONS
+    // ========================================
+    
+    /**
+     * Extracts username from a user cell element
+     * Uses cached results when available to reduce DOM queries
+     * 
+     * @param {Element} cell - User cell DOM element
+     * @returns {string|null} Username without @ symbol, or null if not found
+     */
     function getUsername(cell) {
         if (!cell) return null;
         
@@ -285,6 +514,7 @@
             if (cached.username) return cached.username;
         }
         
+        // Method 1: Search for profile links
         const links = cell.querySelectorAll('a[role="link"]');
         for (const link of links) {
             const href = link.getAttribute('href');
@@ -294,6 +524,8 @@
                 return username;
             }
         }
+        
+        // Method 2: Search for @username text in spans
         const spans = cell.querySelectorAll('span');
         for (const span of spans) {
             const text = span.textContent.trim();
@@ -306,6 +538,13 @@
         return null;
     }
 
+    /**
+     * Finds the "Following" button within a user cell
+     * Uses cached results when available to reduce DOM queries
+     * 
+     * @param {Element} cell - User cell DOM element
+     * @returns {HTMLButtonElement|null} Following button or null if not found
+     */
     function findFollowingButton(cell) {
         if (!cell) return null;
         
@@ -315,6 +554,7 @@
             if (cached.button) return cached.button;
         }
         
+        // Search for button with exact "Following" text
         const buttons = cell.querySelectorAll('button');
         for (const btn of buttons) {
             const text = btn.textContent.trim();
@@ -326,6 +566,14 @@
         return null;
     }
 
+    // ========================================
+    // CONFIGURATION PERSISTENCE
+    // ========================================
+    
+    /**
+     * Saves current configuration to localStorage
+     * Validates and clamps values to acceptable ranges
+     */
     function persistCfg(){ 
         try {
             const tolerance = parseInt($('cfg-tolerance').value) || 50;
